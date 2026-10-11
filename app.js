@@ -191,15 +191,27 @@ function dayStats(dayStart) {
 function nurseElapsed(t, side, now = Date.now()) {
   return (t.acc[side] || 0) + (t.side === side ? now - t.segStart : 0);
 }
+function nurseTimer() {
+  return state.timers.nurse ||
+    (state.timers.nurse = { startedAt: Date.now(), acc: { L: 0, R: 0 }, side: null, segStart: null, lastSide: null, lastAt: 0 });
+}
 function tapSide(side) {
   const now = Date.now();
-  let t = state.timers.nurse;
-  if (!t) {
-    t = state.timers.nurse = { startedAt: now, acc: { L: 0, R: 0 }, side: null, segStart: null, lastSide: null };
-  }
+  const t = nurseTimer();
   if (t.side) t.acc[t.side] += now - t.segStart;
   if (t.side === side) { t.side = null; t.segStart = null; }
   else { t.side = side; t.segStart = now; t.lastSide = side; }
+  t.lastAt = now;
+  save();
+}
+// Set one side's time directly (the ✎ edit). A running side keeps running from the new value.
+function setSideElapsed(side, ms) {
+  const t = nurseTimer(), now = Date.now();
+  t.acc[side] = Math.max(0, Math.round(ms / 1000) * 1000);
+  if (t.side === side) t.segStart = now;
+  if (!t.lastSide) t.lastSide = side;
+  const total = nurseElapsed(t, 'L', now) + nurseElapsed(t, 'R', now);
+  if (now - t.startedAt < total) t.startedAt = now - total; // start can't be later than the time fed
   save();
 }
 function saveNurseTimer() {
@@ -210,7 +222,9 @@ function saveNurseTimer() {
   const right = Math.round(nurseElapsed(t, 'R', now) / 1000);
   delete state.timers.nurse;
   if (left + right < 1) { save(); return false; }
-  upsert({ id: uid(), type: 'nurse', start: t.startedAt, end: now, left, right, lastSide: t.lastSide });
+  // Running: ends now. Otherwise at the last pause, or start + time fed for entered times.
+  const end = t.side ? now : Math.min(now, Math.max(t.startedAt + (left + right) * 1000, t.lastAt || 0));
+  upsert({ id: uid(), type: 'nurse', start: t.startedAt, end, left, right, lastSide: t.lastSide || (right > left ? 'R' : 'L') });
   return true;
 }
 
@@ -227,7 +241,7 @@ let tab = 'home';
 let historyFilter = 'all';
 let historyMode = 'list';
 try { historyMode = localStorage.getItem('feeding.historyMode') || 'list'; } catch (e) { /* storage unavailable */ }
-let weekOffset = 0; // 0 = this week, -1 = last week, …
+let wkScroll = null; // remembered timeline scroll position {right, top}
 
 function render() {
   tickers = [];
@@ -338,14 +352,17 @@ function viewHistory() {
   return `${modes}<div class="chips">${chips}</div>${html}`;
 }
 
-/* Week timeline: one column per day (Mon–Sun), time of day running down. */
+/* Timeline: one column per day, time of day running down. Scrolls
+ * sideways through every day back to the first entry (today on the right). */
 const LANES = { nurse: 0, bottle: 0, pump: 0, sleep: 1, diaper: 2, note: 2 };
+const WK_HOUR_PX = 28;
 
-function weekDays() {
-  const d = new Date(startOfDay(Date.now()));
-  d.setDate(d.getDate() - (d.getDay() + 6) % 7 + weekOffset * 7); // Monday
+function timelineDays() {
+  const today = startOfDay(Date.now());
+  const oldest = state.events.length ? startOfDay(Math.min(...state.events.map(e => e.start))) : today;
+  const d = new Date(Math.min(oldest, today - 13 * 864e5)); // at least two weeks
   const days = [];
-  for (let i = 0; i < 7; i++) {
+  while (d.getTime() <= today && days.length < 730) {
     const start = d.getTime();
     d.setDate(d.getDate() + 1); // setDate keeps DST days at 23/25h
     days.push({ start, end: d.getTime() });
@@ -354,22 +371,31 @@ function weekDays() {
 }
 
 function viewWeek() {
-  const days = weekDays();
+  const days = timelineDays();
   const now = Date.now();
+  const today = startOfDay(now);
   const all = historyFilter === 'all';
-  // Running timers show as live blocks
   const evs = state.events.filter(e => all || e.type === historyFilter);
+  // Running timers show as live blocks
   if (state.timers.nurse && (all || historyFilter === 'nurse')) evs.push({ id: 'timer:nurse', type: 'nurse', start: state.timers.nurse.startedAt, end: now });
   if (state.timers.sleep && (all || historyFilter === 'sleep')) evs.push({ id: 'timer:sleep', type: 'sleep', start: state.timers.sleep.startedAt, end: now });
 
-  const first = new Date(days[0].start), last = new Date(days[6].start);
-  const mon = d => d.toLocaleDateString([], { month: 'short' });
-  const range = first.getMonth() === last.getMonth() ? mon(first) : `${mon(first)} – ${mon(last)}`;
-  const today = startOfDay(now);
+  // Bucket events by day index so each column only looks at its own entries
+  const first = days[0].start;
+  const byDay = days.map(() => []);
+  const dayIndex = ms => { let i = Math.floor((ms - first) / 864e5); while (i > 0 && days[i] && days[i].start > ms) i--; while (days[i + 1] && days[i + 1].start <= ms) i++; return i; };
+  for (const e of evs) {
+    const hasDur = (e.type === 'nurse' || e.type === 'sleep') && e.end > e.start;
+    if (e.start < first && !(hasDur && e.end > first)) continue;
+    const a = Math.max(0, dayIndex(Math.max(e.start, first)));
+    const b = hasDur ? Math.min(days.length - 1, dayIndex(e.end - 1)) : a;
+    for (let i = a; i <= b && i < days.length; i++) byDay[i].push(e);
+  }
 
   const head = days.map(d => {
     const dt = new Date(d.start);
-    return `<div class="wk-day ${d.start === today ? 'today' : ''}">
+    const month = dt.getDate() === 1 ? `<em>${dt.toLocaleDateString([], { month: 'short' })}</em>` : '';
+    return `<div class="wk-day ${d.start === today ? 'today' : ''}">${month}
       <span>${dt.toLocaleDateString([], { weekday: 'short' }).slice(0, 2)}</span><b>${dt.getDate()}</b></div>`;
   }).join('');
 
@@ -380,22 +406,19 @@ function viewWeek() {
   }).join('');
   const lines = [3, 6, 9, 12, 15, 18, 21].map(h => `<div class="wk-line" style="top:${hourPct(h)}%"></div>`).join('');
 
-  const cols = days.map(d => {
+  const cols = days.map((d, i) => {
     const span = d.end - d.start;
-    const blocks = [];
-    for (const e of evs) {
+    const blocks = byDay[i].map(e => {
       const hasDur = (e.type === 'nurse' || e.type === 'sleep') && e.end > e.start;
-      const s = e.start, en = hasDur ? e.end : e.start;
-      if (hasDur ? (en <= d.start || s >= d.end) : (s < d.start || s >= d.end)) continue;
-      const from = Math.max(s, d.start), to = Math.min(en, d.end);
+      const from = Math.max(e.start, d.start), to = Math.min(hasDur ? e.end : e.start, d.end);
       const lane = all ? LANES[e.type] : 0;
       const t = TYPES[e.type];
-      blocks.push(`<button class="wk-ev ${hasDur ? '' : 'pt'} ${all ? 'lane' : ''}" data-ev="${e.id}"
+      return `<button class="wk-ev ${hasDur ? '' : 'pt'} ${all ? 'lane' : ''}" data-ev="${e.id}"
         style="--c:${t.color};top:${((from - d.start) / span) * 100}%;height:${((to - from) / span) * 100}%;${all ? `left:calc(${lane} * 100% / 3 + 1px)` : ''}"
-        title="${esc(t.title)} ${fmtTime(e.start)}" aria-label="${esc(t.title)} ${fmtTime(e.start)}"></button>`);
-    }
+        aria-label="${esc(t.title)} ${fmtTime(e.start)}"></button>`;
+    }).join('');
     const nowLine = d.start === today ? `<div class="wk-now" id="wkNow" style="top:${((now - d.start) / span) * 100}%"></div>` : '';
-    return `<div class="wk-col ${d.start === today ? 'today' : ''}">${blocks.join('')}${nowLine}</div>`;
+    return `<div class="wk-col ${d.start === today ? 'today' : ''}">${blocks}${nowLine}</div>`;
   }).join('');
 
   const legend = all ? `<div class="wk-legend">
@@ -404,35 +427,54 @@ function viewWeek() {
       <span><i style="background:var(--diaper)"></i>Diapers &amp; notes</span></div>` : '';
 
   return `
-    <div class="wk-nav">
-      <button class="x" id="wkPrev" aria-label="Previous week">‹</button>
-      <div><b>${range}</b> <span class="note">${weekOffset === 0 ? 'This week' : weekOffset === -1 ? 'Last week' : `${-weekOffset} weeks ago`}</span></div>
-      <button class="x" id="wkNext" aria-label="Next week" ${weekOffset >= 0 ? 'disabled' : ''}>›</button>
-    </div>
-    <div class="wk card">
-      <div class="wk-head"><div></div>${head}</div>
-      <div class="wk-body">
-        <div class="wk-axis">${axis}</div>
-        <div class="wk-cols">
-          <div class="wk-night" style="top:0;height:25%"></div>
-          <div class="wk-night" style="top:75%;height:25%"></div>
-          ${lines}${cols}
+    <div class="wk card" style="--days:${days.length};--body:${24 * WK_HOUR_PX}px">
+      <div class="wk-scroll" id="wkScroll">
+        <div class="wk-grid">
+          <div class="wk-corner"><b id="wkMonth"></b></div>
+          ${head}
+          <div class="wk-axis">${axis}</div>
+          <div class="wk-cols">
+            <div class="wk-night" style="top:0;height:25%"></div>
+            <div class="wk-night" style="top:75%;height:25%"></div>
+            ${lines}${cols}
+          </div>
         </div>
       </div>
+      <button class="chip wk-today" id="wkToday" hidden>Today ›</button>
     </div>
     ${legend}`;
 }
 
 function mountHistory(view) {
-  $$('.chip', view).forEach(c => c.addEventListener('click', () => { historyFilter = c.dataset.f; render(); }));
+  $$('.chip[data-f]', view).forEach(c => c.addEventListener('click', () => { historyFilter = c.dataset.f; render(); }));
   $$('[data-mode]', view).forEach(b => b.addEventListener('click', () => {
     historyMode = b.dataset.mode;
     try { localStorage.setItem('feeding.historyMode', historyMode); } catch (e) { /* storage unavailable */ }
     render();
   }));
   if (historyMode !== 'week') return;
-  $('#wkPrev', view).addEventListener('click', () => { weekOffset--; render(); });
-  $('#wkNext', view).addEventListener('click', () => { if (weekOffset < 0) { weekOffset++; render(); } });
+  const sc = $('#wkScroll', view);
+  const days = timelineDays();
+  const colW = () => ($('.wk-col', sc) || {}).offsetWidth || 1;
+  const toToday = smooth => sc.scrollTo({ left: sc.scrollWidth, behavior: smooth ? 'smooth' : 'auto' });
+  // Restore the previous position (kept relative to today, since days get added on the right)
+  if (wkScroll) {
+    sc.scrollLeft = sc.scrollWidth - sc.clientWidth - wkScroll.right;
+    sc.scrollTop = wkScroll.top;
+  } else {
+    toToday(false);
+    const d0 = startOfDay(Date.now());
+    sc.scrollTop = Math.max(0, ((Date.now() - d0) / 864e5) * 24 * WK_HOUR_PX - sc.clientHeight / 2);
+  }
+  const onScroll = () => {
+    wkScroll = { right: sc.scrollWidth - sc.clientWidth - sc.scrollLeft, top: sc.scrollTop };
+    const i = Math.min(days.length - 1, Math.max(0, Math.floor(sc.scrollLeft / colW())));
+    $('#wkMonth', view).textContent = new Date(days[i].start).toLocaleDateString([], { month: 'short' });
+    $('#wkToday', view).hidden = wkScroll.right < colW();
+  };
+  sc.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+  $('#wkToday', view).addEventListener('click', () => toToday(true));
   $$('.wk-ev', view).forEach(b => b.addEventListener('click', () => {
     const id = b.dataset.ev;
     if (id === 'timer:nurse') return openNurseTimer();
@@ -603,42 +645,81 @@ function sheetTick(fn) { fn(); sheetTickers.push(setInterval(fn, 250)); }
 
 function openNurseTimer() {
   const last = lastOf(e => e.type === 'nurse');
+  let editing = null; // side whose time is being edited
   const body = `
-    <p class="note" style="margin:0 0 6px">${last?.lastSide ? `Last feed ended on <span class="badge">${last.lastSide === 'L' ? 'Left' : 'Right'}</span> · ${fmtAgo(last.start)}` : 'Tap a side to start the timer. Tap again to pause.'}</p>
+    <p class="note" style="margin:0 0 6px">${last?.lastSide ? `Last feed ended on <span class="badge">${last.lastSide === 'L' ? 'Left' : 'Right'}</span> · ${fmtAgo(last.start)}` : 'Tap a side to start the timer, tap again to pause. Use ✎ to type in or adjust time.'}</p>
     <div class="sides">
-      ${['L', 'R'].map(s => `<button class="side" data-side="${s}">
-        <span class="lr">${s}</span><span class="t" data-t="${s}">0:00</span><span class="hint" data-h="${s}">${last?.lastSide === s ? 'ended here last' : 'start'}</span>
-      </button>`).join('')}
+      ${['L', 'R'].map(s => `<div class="side-wrap">
+        <button class="side" data-side="${s}">
+          <span class="lr">${s}</span><span class="t" data-t="${s}">0:00</span><span class="hint" data-h="${s}">${last?.lastSide === s ? 'ended here last' : 'start'}</span>
+        </button>
+        <button class="edit-pill" data-edit="${s}">✎ Edit</button>
+      </div>`).join('')}
     </div>
+    <div class="adj card" id="nAdj" hidden>
+      <div class="adj-head"><b id="nAdjTitle"></b><button class="link" id="nAdjDone">Done</button></div>
+      <div class="adj-row">
+        <button data-d="-300">−5</button><button data-d="-60">−1</button>
+        <label class="adj-min"><input type="number" inputmode="numeric" min="0" id="nAdjMin"><span>min</span></label>
+        <button data-d="60">+1</button><button data-d="300">+5</button>
+      </div>
+      <p class="note" style="margin:8px 0 0">Changes apply right away. A running side keeps counting from the new time.</p>
+    </div>
+    <div class="field"><label>Started</label><input type="datetime-local" id="nStart"></div>
     <div class="total" id="nTotal"></div>
     <div class="btn-row">
       <button class="btn secondary" id="nDiscard">Discard</button>
       <button class="btn" id="nSave">Save</button>
-    </div>
-    <button class="btn secondary" id="nManual">Enter manually instead</button>`;
+    </div>`;
   openSheet('Nursing', TYPES.nurse.color, body, root => {
-    $$('.side', root).forEach(b => b.addEventListener('click', () => { tapSide(b.dataset.side); update(); }));
+    const startInput = $('#nStart', root), adj = $('#nAdj', root), minInput = $('#nAdjMin', root);
+    const syncStart = () => { startInput.value = toLocalInput((state.timers.nurse || { startedAt: Date.now() }).startedAt); };
+    syncStart();
+    $$('.side', root).forEach(b => b.addEventListener('click', () => { tapSide(b.dataset.side); syncStart(); update(); }));
+    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => {
+      editing = editing === b.dataset.edit ? null : b.dataset.edit;
+      if (editing) nurseTimer();
+      update(true);
+    }));
+    $('#nAdjDone', root).addEventListener('click', () => { editing = null; update(); });
+    $$('[data-d]', adj).forEach(b => b.addEventListener('click', () => {
+      const t = nurseTimer();
+      setSideElapsed(editing, nurseElapsed(t, editing) + +b.dataset.d * 1000);
+      syncStart(); update(true);
+    }));
+    minInput.addEventListener('change', () => {
+      setSideElapsed(editing, Math.max(0, +minInput.value || 0) * 60000);
+      syncStart(); update(true);
+    });
+    startInput.addEventListener('change', () => {
+      const t = nurseTimer();
+      t.startedAt = Math.min(Date.now(), fromLocalInput(startInput.value, t.startedAt));
+      save(); update();
+    });
     $('#nSave', root).addEventListener('click', () => {
-      if (saveNurseTimer()) { closeSheet(); toast('Nursing saved'); } else toast('Start a side first');
+      if (saveNurseTimer()) { closeSheet(); toast('Nursing saved'); } else toast('Start a side or enter a time first');
     });
     $('#nDiscard', root).addEventListener('click', () => {
-      if (state.timers.nurse && !confirm('Discard this nursing session?')) return;
+      const t = state.timers.nurse;
+      if (t && nurseElapsed(t, 'L') + nurseElapsed(t, 'R') > 0 && !confirm('Discard this nursing session?')) return;
       delete state.timers.nurse; save(); closeSheet();
     });
-    $('#nManual', root).addEventListener('click', () => openEditor('nurse'));
-    function update() {
+    function update(forceMin) {
       const t = state.timers.nurse, now = Date.now();
+      if (!$('#nTotal', root)) return;
       for (const s of ['L', 'R']) {
-        const btn = $(`[data-side="${s}"]`, root);
-        if (!btn) return;
         const running = t && t.side === s;
-        btn.classList.toggle('on', !!running);
+        $(`[data-side="${s}"]`, root).classList.toggle('on', !!running);
+        $(`[data-edit="${s}"]`, root).classList.toggle('on', editing === s);
         $(`[data-t="${s}"]`, root).textContent = fmtClock(t ? nurseElapsed(t, s, now) : 0);
-        if (t) $(`[data-h="${s}"]`, root).textContent = running ? 'tap to pause' : (nurseElapsed(t, s, now) ? 'paused' : 'start');
+        if (t) $(`[data-h="${s}"]`, root).textContent = running ? 'tap to pause' : (nurseElapsed(t, s, now) ? 'tap to resume' : 'start');
       }
-      $('#nTotal', root).textContent = t
-        ? `Total ${fmtClock(nurseElapsed(t, 'L', now) + nurseElapsed(t, 'R', now))} · started ${fmtTime(t.startedAt)}`
-        : '';
+      adj.hidden = !editing;
+      if (editing) {
+        $('#nAdjTitle', root).textContent = `${editing === 'L' ? 'Left' : 'Right'} side`;
+        if (forceMin || document.activeElement !== minInput) minInput.value = Math.round(nurseElapsed(t, editing, now) / 60000);
+      }
+      $('#nTotal', root).textContent = t ? `Total ${fmtClock(nurseElapsed(t, 'L', now) + nurseElapsed(t, 'R', now))}` : '';
     }
     sheetTick(update);
   });
@@ -646,32 +727,53 @@ function openNurseTimer() {
 
 function openSleep() {
   const t = state.timers.sleep;
-  if (!t) {
-    openSheet('Sleep', TYPES.sleep.color, `
-      <button class="btn" id="sStart">Start sleep timer now</button>
-      <button class="btn secondary" id="sPast">Log a past sleep</button>`, root => {
+  const running = !!t;
+  openSheet(running ? 'Sleeping' : 'Sleep', TYPES.sleep.color, `
+    <div class="total big-clock" id="sEl">0:00</div>
+    <div class="field"><label>Fell asleep</label><input type="datetime-local" id="sFrom" value="${toLocalInput(running ? t.startedAt : Date.now())}"></div>
+    ${running ? `
+      <div class="field" id="sToWrap" hidden><label>Woke up</label><input type="datetime-local" id="sTo" value="${toLocalInput(Date.now())}"></div>
+      <button class="btn" id="sWake">Woke up now — save</button>
+      <div class="btn-row">
+        <button class="btn secondary" id="sEarlier">✎ Woke up earlier</button>
+        <button class="btn secondary" id="sCancel">Cancel timer</button>
+      </div>` : `
+      <button class="btn" id="sStart">Start timer</button>
+      <p class="note" style="text-align:center">Already asleep? Change “Fell asleep” first; the timer counts from then.</p>
+      <button class="btn secondary" id="sPast">Log a finished sleep</button>`}`, root => {
+    const from = $('#sFrom', root);
+    from.addEventListener('change', () => {
+      if (!running) return;
+      t.startedAt = Math.min(Date.now(), fromLocalInput(from.value, t.startedAt)); save();
+    });
+    if (running) {
+      const saveSleep = end => {
+        if (end <= t.startedAt) return toast('Wake time is before sleep time');
+        upsert({ id: uid(), type: 'sleep', start: t.startedAt, end });
+        delete state.timers.sleep; save(); closeSheet(); toast('Sleep saved');
+      };
+      $('#sWake', root).addEventListener('click', () => {
+        const wrap = $('#sToWrap', root);
+        saveSleep(wrap.hidden ? Date.now() : Math.min(Date.now(), fromLocalInput($('#sTo', root).value)));
+      });
+      $('#sEarlier', root).addEventListener('click', e => {
+        $('#sToWrap', root).hidden = false; e.target.hidden = true; $('#sWake', root).textContent = 'Save sleep';
+      });
+      $('#sCancel', root).addEventListener('click', () => {
+        if (!confirm('Cancel the running sleep timer?')) return;
+        delete state.timers.sleep; save(); closeSheet();
+      });
+    } else {
       $('#sStart', root).addEventListener('click', () => {
-        state.timers.sleep = { startedAt: Date.now() }; save(); closeSheet(); toast('Sleep timer started');
+        state.timers.sleep = { startedAt: Math.min(Date.now(), fromLocalInput(from.value)) };
+        save(); openSleep(); // stay in the sheet, now running
       });
       $('#sPast', root).addEventListener('click', () => openEditor('sleep'));
+    }
+    sheetTick(() => {
+      const el = $('#sEl', root);
+      if (el && state.timers.sleep) el.textContent = fmtClock(Date.now() - state.timers.sleep.startedAt);
     });
-    return;
-  }
-  openSheet('Sleeping', TYPES.sleep.color, `
-    <div class="total" style="font-size:40px;color:var(--text);font-weight:700" id="sEl"></div>
-    <div class="field"><label>Fell asleep at</label><input type="datetime-local" id="sFrom" value="${toLocalInput(t.startedAt)}"></div>
-    <button class="btn" id="sWake">Woke up — save</button>
-    <button class="btn secondary" id="sCancel">Cancel timer</button>`, root => {
-    $('#sFrom', root).addEventListener('change', e => { t.startedAt = fromLocalInput(e.target.value, t.startedAt); save(); });
-    $('#sWake', root).addEventListener('click', () => {
-      upsert({ id: uid(), type: 'sleep', start: t.startedAt, end: Date.now() });
-      delete state.timers.sleep; save(); closeSheet(); toast('Sleep saved');
-    });
-    $('#sCancel', root).addEventListener('click', () => {
-      if (!confirm('Cancel the running sleep timer?')) return;
-      delete state.timers.sleep; save(); closeSheet();
-    });
-    sheetTick(() => { const el = $('#sEl', root); if (el) el.textContent = fmtClock(Date.now() - t.startedAt); });
   });
 }
 

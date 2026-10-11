@@ -6,15 +6,15 @@ It's a **Progressive Web App (PWA)**: plain HTML, CSS and JS with no build step.
 
 ## Features
 
-- **Nursing timer** with separate Left/Right sides. Tap a side to start, tap again to pause, or tap the other side to switch. It remembers which side you ended on last time. If you close the app mid-feed, the timer keeps running.
+- **Nursing timer** with separate Left/Right sides. Tap a side to start, tap again to pause, or tap the other side to switch. Tap **✎ Edit** under a side to type in minutes or nudge it by ±1/±5. A running side keeps counting from the new time, so the same screen covers live timing, catching up a feed you forgot to start, and entering one after the fact. It remembers which side you ended on last time, and the timer keeps running if you close the app.
 - **Bottle** (breast milk or formula). It starts from the last amount you entered.
 - **Pumping** (left and right amounts).
 - **Diaper**: wet, dirty, mixed or dry, with an optional rash flag.
-- **Sleep** timer, or log a sleep after the fact.
+- **Sleep** timer. You can backdate when the baby fell asleep and it counts from then, or set an earlier wake-up time when saving.
 - **Notes** for medicine, temperature, milestones and so on.
 - **Optional live sync** between both parents' phones (free Firebase backend, see below).
 - **Home glance**: time since the last feed and the last diaper, plus today's totals.
-- **History** as a day-by-day list or a **week timeline** (days as columns, time of day running down; durations shown as blocks), with filters. Tap any entry to edit or delete it (deletes can be undone).
+- **History** as a day-by-day list or a scrollable **timeline** (days as columns, swipe sideways back through every day; time of day running down; durations shown as blocks), with filters. Tap any entry to edit or delete it (deletes can be undone).
 - **Trends**: 7-day charts and the average time between feeds.
 - ml or oz units. Auto, light and dark themes, plus a dim, red-shifted **Night** theme for 3 a.m. feeds.
 - JSON backup and import (import merges entries), and CSV export for the pediatrician.
