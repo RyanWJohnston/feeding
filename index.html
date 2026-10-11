@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Feeding Log</title>
+  <meta name="description" content="Private, offline breastfeeding, bottle, pump, diaper and sleep tracker.">
+  <meta name="theme-color" content="#1c1a24" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Feeding">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="baby-name" id="babyName">Baby</div>
+      <div class="baby-age" id="babyAge"></div>
+    </div>
+    <div class="clock" id="clock"></div>
+  </header>
+
+  <main id="view"></main>
+
+  <nav class="tabbar" aria-label="Main">
+    <button data-tab="home" class="active"><span class="ti">◉</span>Home</button>
+    <button data-tab="history"><span class="ti">☰</span>History</button>
+    <button data-tab="stats"><span class="ti">▥</span>Trends</button>
+    <button data-tab="settings"><span class="ti">⚙</span>Settings</button>
+  </nav>
+
+  <dialog id="sheet" class="sheet"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
