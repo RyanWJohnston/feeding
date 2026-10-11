@@ -19,14 +19,15 @@ It's a **Progressive Web App (PWA)**: plain HTML, CSS and JS with no build step.
 - ml or oz units. Auto, light and dark themes, plus a dim, red-shifted **Night** theme for 3 a.m. feeds.
 - JSON backup and import (import merges entries), and CSV export for the pediatrician.
 
-## Deploy (one time, ~2 minutes)
+## Deploy (one time, ~1 minute)
 
-1. Merge this branch into `main`.
-2. On GitHub, open **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-3. The workflow in `.github/workflows/pages.yml` publishes the site to
-   `https://<your-user>.github.io/feeding/`.
+1. On GitHub, open **Settings → Pages → Build and deployment**.
+2. Set **Source** to **Deploy from a branch**, choose the repo's default branch and the `/ (root)` folder, then **Save**.
+3. After a minute or two the site is live at `https://<your-user>.github.io/feeding/`. Every later push to that branch updates it.
 
-> On a free GitHub plan, Pages only works for **public** repos. That's fine: the repo holds only app code. Your baby's data never leaves the phone.
+(Optional: `.github/workflows/pages.yml` deploys from a `main` branch via GitHub Actions instead. To use it, set Source to **GitHub Actions**.)
+
+> On a free GitHub plan, Pages only works for **public** repos. That's fine: the repo holds only app code. Your baby's data never goes into it.
 
 ## Install on your phone
 
