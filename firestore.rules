@@ -1,0 +1,16 @@
+rules_version = '2';
+// Each family is a long random code that acts as the shared secret: anyone
+// who knows it can read/write that family's log, nobody can list families.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /families/{family} {
+      allow get, create, update: if request.auth != null && family.size() >= 20;
+
+      match /events/{event} {
+        allow read: if request.auth != null && family.size() >= 20;
+        allow write: if request.auth != null && family.size() >= 20
+          && request.resource.data.size() <= 20;
+      }
+    }
+  }
+}

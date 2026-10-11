@@ -12,6 +12,7 @@ It's a **Progressive Web App (PWA)**: plain HTML, CSS and JS with no build step.
 - **Diaper**: wet, dirty, mixed or dry, with an optional rash flag.
 - **Sleep** timer, or log a sleep after the fact.
 - **Notes** for medicine, temperature, milestones and so on.
+- **Optional live sync** between both parents' phones (free Firebase backend, see below).
 - **Home glance**: time since the last feed and the last diaper, plus today's totals.
 - **History** grouped by day, with filters. Tap any entry to edit or delete it (deletes can be undone).
 - **Trends**: 7-day charts and the average time between feeds.
@@ -34,17 +35,27 @@ It's a **Progressive Web App (PWA)**: plain HTML, CSS and JS with no build step.
 
 ## Where the data lives
 
-Entries are stored in the browser's `localStorage` **on each device**. The app works fully offline. There are no accounts, no server and no tracking.
+Entries are saved on each phone, and the app works fully offline. There are no accounts and no tracking. With live sync turned on, each phone also mirrors its entries to your own free Firebase database. Both phones update within a second or two. Changes made offline upload when the phone is back online.
 
-- Use **Settings → Export backup** now and then.
-- To give a second caregiver the same history, export on phone A, send them the file (AirDrop or Messages), and **Import** it on phone B. Import merges by entry ID, so you can repeat it safely.
-- Real-time sync between two phones would need a small backend. See below.
+The dot next to the clock shows sync status: **green** means synced, **amber** means uploading, **hollow** means offline, and **red** means an error (details in Settings).
 
-## Possible next step: live sync between parents
+## Live sync between phones (one-time setup, ~5 minutes)
 
-GitHub Pages only serves static files, so it can't store your data. If you both want to log on your own phones and see each other's entries, add a free hosted database:
+The site stays on GitHub Pages. Firebase only stores the data. The free "Spark" plan needs no credit card and covers this app many times over.
 
-- **Supabase** (free tier) or **Firebase Firestore** (free tier). Create one `events` table or collection and sign in with a magic link. All storage goes through `load()`, `save()` and `upsert()` in `app.js`, and every event already has a unique `id` and an `updated` timestamp, so syncing with last-write-wins only needs changes in those few places.
+1. Go to https://console.firebase.google.com → **Create a project** (you can turn Google Analytics off).
+2. **Build → Firestore Database → Create database**. Choose a location near you and start in **production mode**.
+3. On the Firestore **Rules** tab, replace the contents with [`firestore.rules`](firestore.rules) from this repo, then **Publish**.
+4. **Build → Authentication → Get started → Sign-in method → Anonymous → Enable**.
+5. **Project settings** (gear icon) → **Your apps** → the web icon `</>` → register an app (no hosting needed). Copy the `firebaseConfig` values.
+6. Put those values into [`sync-config.js`](sync-config.js) (edit it on GitHub and commit), replacing `null`.
+7. Open the app on phone A → **Settings → Start syncing**. Tap **Share code** to send the code to phone B. On phone B, go to **Settings**, paste the code and tap **Join**. Entries already on each phone are merged.
+
+Notes:
+- Firebase web config values aren't secrets. Access is controlled by `firestore.rules`. The family code is the real key: anyone with it can read and edit the log, so only share it with your partner. GitHub may still flag the `apiKey` as a "secret". That alert is safe to close. Optionally, in Google Cloud Console → Credentials, restrict the key to the referrer `https://ryanwjohnston.github.io/*`.
+- Nursing and sleep timers that are *running* stay on the phone that started them. Each one syncs when it's saved.
+- **Delete all data** only clears this phone and stops syncing on it. The shared log isn't affected.
+- Keep an occasional **Export backup** anyway.
 
 ## Run locally
 

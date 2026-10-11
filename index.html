@@ -22,7 +22,7 @@
       <div class="baby-name" id="babyName">Baby</div>
       <div class="baby-age" id="babyAge"></div>
     </div>
-    <div class="clock" id="clock"></div>
+    <div class="clock"><span class="sync-dot" id="syncDot" data-s="off"></span><span id="clock"></span></div>
   </header>
 
   <main id="view"></main>
@@ -37,6 +37,8 @@
   <dialog id="sheet" class="sheet"></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  <script src="sync-config.js"></script>
+  <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

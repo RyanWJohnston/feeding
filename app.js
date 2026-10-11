@@ -28,6 +28,7 @@ function defaultState() {
     settings: { babyName: '', birthDate: '', unit: 'ml', theme: 'auto' },
     events: [],
     timers: {},
+    sync: { family: null, lastServerAt: 0, pending: {}, pendingBaby: false },
   };
 }
 
@@ -37,7 +38,7 @@ function load() {
     if (!raw) return defaultState();
     const s = JSON.parse(raw);
     const d = defaultState();
-    return { ...d, ...s, settings: { ...d.settings, ...s.settings }, timers: s.timers || {} };
+    return { ...d, ...s, settings: { ...d.settings, ...s.settings }, timers: s.timers || {}, sync: { ...d.sync, ...s.sync } };
   } catch (e) {
     console.error(e);
     return defaultState();
@@ -62,6 +63,7 @@ function upsert(ev) {
   if (i >= 0) state.events[i] = ev; else state.events.push(ev);
   state.events.sort((a, b) => b.start - a.start);
   save();
+  Sync.push(ev);
 }
 
 function remove(id) {
@@ -69,6 +71,7 @@ function remove(id) {
   if (i < 0) return;
   const [ev] = state.events.splice(i, 1);
   save();
+  Sync.pushDelete(id);
   toast(`${TYPES[ev.type].title} deleted`, 'Undo', () => { upsert(ev); render(); });
 }
 
@@ -382,9 +385,11 @@ function viewSettings() {
       <div class="field"><label>Theme</label>${seg('theme', [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark'], ['night', 'Night']], s.theme)}</div>
       <p class="note">“Night” is a dim, red-shifted theme for 3 a.m. feeds.</p>
     </div>
+    <h2>Sync between phones</h2>
+    <div class="card">${syncSettingsHtml()}</div>
     <h2>Your data</h2>
     <div class="card">
-      <p class="note" style="margin-top:0">${state.events.length} entries, stored only on this device. Export a backup regularly, or use it to copy data to another phone (Import merges, it doesn't overwrite).</p>
+      <p class="note" style="margin-top:0">${state.events.length} entries, stored on this phone${Sync.family ? ' and synced' : ''}. Export a backup regularly, or use it to copy data to another phone (Import merges, it doesn't overwrite).</p>
       <p class="note" id="persist"></p>
       <div class="btn-row">
         <button class="btn secondary" id="exp">Export backup</button>
@@ -399,18 +404,20 @@ function viewSettings() {
 
 function mountSettings(view) {
   const set = (k, v) => { state.settings[k] = v; save(); };
-  $('#sName', view).addEventListener('change', e => { set('babyName', e.target.value.trim()); render(); });
-  $('#sBirth', view).addEventListener('change', e => { set('birthDate', e.target.value); render(); });
+  const setBaby = (k, v) => { state.settings.babyUpdated = Date.now(); set(k, v); Sync.pushBaby(); render(); };
+  $('#sName', view).addEventListener('change', e => setBaby('babyName', e.target.value.trim()));
+  $('#sBirth', view).addEventListener('change', e => setBaby('birthDate', e.target.value));
   $$('[data-seg]', view).forEach(seg => $$('button', seg).forEach(b => b.addEventListener('click', () => {
     set(seg.dataset.seg, b.dataset.v); render();
   })));
+  mountSyncSettings(view);
   $('#exp', view).addEventListener('click', exportJson);
   $('#csv', view).addEventListener('click', exportCsv);
   $('#imp', view).addEventListener('click', () => $('#impFile', view).click());
   $('#impFile', view).addEventListener('change', e => e.target.files[0] && importJson(e.target.files[0]));
   $('#wipe', view).addEventListener('click', () => {
-    if (confirm('Delete ALL entries and settings on this device? Export a backup first if unsure.')) {
-      state = defaultState(); save(); render(); toast('All data deleted');
+    if (confirm('Delete ALL entries and settings on this phone? This also stops syncing; the other phone keeps its copy. Export a backup first if unsure.')) {
+      Sync.leave(); state = defaultState(); save(); render(); toast('All data deleted from this phone');
     }
   });
   if (navigator.storage && navigator.storage.persisted) {
@@ -421,6 +428,48 @@ function mountSettings(view) {
         : 'Tip: on iPhone, use Share → Add to Home Screen so Safari doesn’t clear the data.';
     });
   }
+}
+
+function syncSettingsHtml() {
+  if (!Sync.configured()) {
+    return `<p class="note" style="margin:0">Live sync isn’t set up yet. Add your Firebase config to <code>sync-config.js</code> (see the README), then both phones will stay in sync automatically.</p>`;
+  }
+  if (!Sync.family) {
+    return `
+      <p class="note" style="margin-top:0">Keep both parents’ phones in sync. Start on one phone, then enter the same code on the other. Entries already on each phone are merged.</p>
+      <button class="btn" id="syncCreate" style="--c:var(--nurse)">Start syncing (get a code)</button>
+      <div class="field" style="margin-top:16px"><label>Or join with a code from the other phone</label>
+        <input type="text" id="syncCode" placeholder="Paste code" autocapitalize="off" autocomplete="off" spellcheck="false"></div>
+      <button class="btn secondary" id="syncJoin">Join</button>`;
+  }
+  return `
+    <p class="note" style="margin-top:0">Family code. Enter this on the other phone under Settings → Join. Keep it private: anyone with it can see and edit the log.</p>
+    <div class="setting-row" style="padding-top:0"><code id="syncCodeShow" style="font-size:15px;word-break:break-all;-webkit-user-select:all;user-select:all">${esc(Sync.family)}</code></div>
+    <p class="note" id="syncStatus">${esc(Sync.statusText())}</p>
+    <div class="btn-row">
+      <button class="btn secondary" id="syncShare">Share code</button>
+      <button class="btn secondary" id="syncLeave">Stop syncing</button>
+    </div>`;
+}
+
+function mountSyncSettings(view) {
+  const on = (id, fn) => { const el = $('#' + id, view); if (el) el.addEventListener('click', fn); };
+  on('syncCreate', () => { Sync.create(); render(); toast('Syncing started: share the code with the other phone'); });
+  on('syncJoin', () => {
+    try { Sync.join($('#syncCode', view).value); render(); toast('Joined: syncing…'); }
+    catch (e) { toast(e.message); }
+  });
+  on('syncShare', async () => {
+    const text = Sync.family;
+    try {
+      if (navigator.share) await navigator.share({ title: 'Feeding Log sync code', text });
+      else { await navigator.clipboard.writeText(text); toast('Code copied'); }
+    } catch (e) { /* share sheet dismissed */ }
+  });
+  on('syncLeave', () => {
+    if (!confirm('Stop syncing on this phone? Entries stay on this phone; new ones won’t be shared.')) return;
+    Sync.leave(); render(); toast('Sync stopped on this phone');
+  });
 }
 
 /* ---------- Sheets ---------- */
@@ -629,7 +678,7 @@ function download(name, text, mime) {
 const stamp = () => toLocalInput(Date.now()).replace(/[T:]/g, '-');
 
 function exportJson() {
-  download(`feeding-backup-${stamp()}.json`, JSON.stringify({ ...state, timers: {} }, null, 1), 'application/json');
+  download(`feeding-backup-${stamp()}.json`, JSON.stringify({ ...state, timers: {}, sync: undefined }, null, 1), 'application/json');
 }
 function exportCsv() {
   const rows = [['date', 'time', 'type', 'details', 'duration_min', 'amount_ml', 'note']];
@@ -651,8 +700,8 @@ function importJson(file) {
     for (const e of data.events) {
       if (!e || !e.id || !TYPES[e.type] || typeof e.start !== 'number') continue;
       const cur = byId.get(e.id);
-      if (!cur) { byId.set(e.id, e); added++; }
-      else if ((e.updated || 0) > (cur.updated || 0)) { byId.set(e.id, e); updated++; }
+      if (!cur) { byId.set(e.id, e); added++; Sync.push(e); }
+      else if ((e.updated || 0) > (cur.updated || 0)) { byId.set(e.id, e); updated++; Sync.push(e); }
     }
     state.events = [...byId.values()].sort((a, b) => b.start - a.start);
     if (!state.settings.babyName && data.settings) state.settings = { ...state.settings, ...data.settings };
@@ -683,10 +732,15 @@ $$('.tabbar button').forEach(b => b.addEventListener('click', () => { tab = b.da
 // Another tab/window changed the data
 window.addEventListener('storage', e => { if (e.key === KEY) { state = load(); render(); } });
 // Refresh "x min ago" etc. when the app comes back to the foreground
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !sheet.open) { state = load(); render(); } });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (!sheet.open) { state = load(); render(); }
+  Sync.flush();
+});
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
 render();
+Sync.start();
