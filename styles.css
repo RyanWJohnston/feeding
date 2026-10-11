@@ -207,13 +207,13 @@ textarea { min-height: 70px; resize: vertical; }
 .hist-mode { margin-bottom: 10px; }
 .wk { padding: 0; overflow: hidden; position: relative; }
 .wk-scroll {
-  overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-  height: max(360px, calc(100dvh - 262px - env(safe-area-inset-bottom) - env(safe-area-inset-top)));
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  height: max(360px, calc(100dvh - 278px - env(safe-area-inset-bottom) - env(safe-area-inset-top)));
 }
 .wk-grid {
   --colw: calc((min(100vw, 640px) - 32px - 38px) / 7);
   display: grid; grid-template-columns: 36px repeat(var(--days), var(--colw));
-  grid-template-rows: auto var(--body); width: max-content;
+  grid-template-rows: auto minmax(0, 1fr); width: max-content; height: 100%; /* whole day fits, no vertical scroll */
 }
 .wk-corner, .wk-day { position: sticky; top: 0; z-index: 4; background: var(--surface); border-bottom: 1px solid var(--line); }
 .wk-corner { left: 0; z-index: 6; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px; font-size: 13px; }

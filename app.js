@@ -355,7 +355,6 @@ function viewHistory() {
 /* Timeline: one column per day, time of day running down. Scrolls
  * sideways through every day back to the first entry (today on the right). */
 const LANES = { nurse: 0, bottle: 0, pump: 0, sleep: 1, diaper: 2, note: 2 };
-const WK_HOUR_PX = 28;
 
 function timelineDays() {
   const today = startOfDay(Date.now());
@@ -427,7 +426,7 @@ function viewWeek() {
       <span><i style="background:var(--diaper)"></i>Diapers &amp; notes</span></div>` : '';
 
   return `
-    <div class="wk card" style="--days:${days.length};--body:${24 * WK_HOUR_PX}px">
+    <div class="wk card" style="--days:${days.length}">
       <div class="wk-scroll" id="wkScroll">
         <div class="wk-grid">
           <div class="wk-corner"><b id="wkMonth"></b></div>
@@ -463,8 +462,6 @@ function mountHistory(view) {
     sc.scrollTop = wkScroll.top;
   } else {
     toToday(false);
-    const d0 = startOfDay(Date.now());
-    sc.scrollTop = Math.max(0, ((Date.now() - d0) / 864e5) * 24 * WK_HOUR_PX - sc.clientHeight / 2);
   }
   const onScroll = () => {
     wkScroll = { right: sc.scrollWidth - sc.clientWidth - sc.scrollLeft, top: sc.scrollTop };
