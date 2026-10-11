@@ -14,7 +14,7 @@ It's a **Progressive Web App (PWA)**: plain HTML, CSS and JS with no build step.
 - **Notes** for medicine, temperature, milestones and so on.
 - **Optional live sync** between both parents' phones (free Firebase backend, see below).
 - **Home glance**: time since the last feed and the last diaper, plus today's totals.
-- **History** grouped by day, with filters. Tap any entry to edit or delete it (deletes can be undone).
+- **History** as a day-by-day list or a **week timeline** (days as columns, time of day running down; durations shown as blocks), with filters. Tap any entry to edit or delete it (deletes can be undone).
 - **Trends**: 7-day charts and the average time between feeds.
 - ml or oz units. Auto, light and dark themes, plus a dim, red-shifted **Night** theme for 3 a.m. feeds.
 - JSON backup and import (import merges entries), and CSV export for the pediatrician.

@@ -225,6 +225,9 @@ setInterval(() => {
 /* ---------- Views ---------- */
 let tab = 'home';
 let historyFilter = 'all';
+let historyMode = 'list';
+try { historyMode = localStorage.getItem('feeding.historyMode') || 'list'; } catch (e) { /* storage unavailable */ }
+let weekOffset = 0; // 0 = this week, -1 = last week, …
 
 function render() {
   tickers = [];
@@ -314,8 +317,11 @@ function mountHome(view) {
 function viewHistory() {
   const chips = ['all', ...Object.keys(TYPES)].map(k =>
     `<button class="chip ${historyFilter === k ? 'on' : ''}" data-f="${k}">${k === 'all' ? 'All' : TYPES[k].title}</button>`).join('');
+  const modes = `<div class="seg hist-mode">${[['list', 'List'], ['week', 'Week']].map(([v, l]) =>
+    `<button data-mode="${v}" class="${historyMode === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  if (historyMode === 'week') return `${modes}<div class="chips">${chips}</div>${viewWeek()}`;
   const evs = state.events.filter(e => historyFilter === 'all' || e.type === historyFilter);
-  if (!evs.length) return `<div class="chips">${chips}</div><div class="empty">Nothing logged yet.</div>`;
+  if (!evs.length) return `${modes}<div class="chips">${chips}</div><div class="empty">Nothing logged yet.</div>`;
   let html = '', curDay = null, buf = [];
   const flush = () => {
     if (curDay === null) return;
@@ -329,10 +335,118 @@ function viewHistory() {
     buf.push(rowHtml(e));
   }
   flush();
-  return `<div class="chips">${chips}</div>${html}`;
+  return `${modes}<div class="chips">${chips}</div>${html}`;
 }
+
+/* Week timeline: one column per day (Mon–Sun), time of day running down. */
+const LANES = { nurse: 0, bottle: 0, pump: 0, sleep: 1, diaper: 2, note: 2 };
+
+function weekDays() {
+  const d = new Date(startOfDay(Date.now()));
+  d.setDate(d.getDate() - (d.getDay() + 6) % 7 + weekOffset * 7); // Monday
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const start = d.getTime();
+    d.setDate(d.getDate() + 1); // setDate keeps DST days at 23/25h
+    days.push({ start, end: d.getTime() });
+  }
+  return days;
+}
+
+function viewWeek() {
+  const days = weekDays();
+  const now = Date.now();
+  const all = historyFilter === 'all';
+  // Running timers show as live blocks
+  const evs = state.events.filter(e => all || e.type === historyFilter);
+  if (state.timers.nurse && (all || historyFilter === 'nurse')) evs.push({ id: 'timer:nurse', type: 'nurse', start: state.timers.nurse.startedAt, end: now });
+  if (state.timers.sleep && (all || historyFilter === 'sleep')) evs.push({ id: 'timer:sleep', type: 'sleep', start: state.timers.sleep.startedAt, end: now });
+
+  const first = new Date(days[0].start), last = new Date(days[6].start);
+  const mon = d => d.toLocaleDateString([], { month: 'short' });
+  const range = first.getMonth() === last.getMonth() ? mon(first) : `${mon(first)} – ${mon(last)}`;
+  const today = startOfDay(now);
+
+  const head = days.map(d => {
+    const dt = new Date(d.start);
+    return `<div class="wk-day ${d.start === today ? 'today' : ''}">
+      <span>${dt.toLocaleDateString([], { weekday: 'short' }).slice(0, 2)}</span><b>${dt.getDate()}</b></div>`;
+  }).join('');
+
+  const hourPct = h => (h / 24) * 100;
+  const axis = [0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => {
+    const label = h % 12 === 0 ? `12<small>${h === 12 ? 'PM' : 'AM'}</small>` : h === 6 || h === 18 ? `6<small>${h < 12 ? 'AM' : 'PM'}</small>` : String(h % 12);
+    return `<div class="wk-tick" style="top:${hourPct(h)}%">${label}</div>`;
+  }).join('');
+  const lines = [3, 6, 9, 12, 15, 18, 21].map(h => `<div class="wk-line" style="top:${hourPct(h)}%"></div>`).join('');
+
+  const cols = days.map(d => {
+    const span = d.end - d.start;
+    const blocks = [];
+    for (const e of evs) {
+      const hasDur = (e.type === 'nurse' || e.type === 'sleep') && e.end > e.start;
+      const s = e.start, en = hasDur ? e.end : e.start;
+      if (hasDur ? (en <= d.start || s >= d.end) : (s < d.start || s >= d.end)) continue;
+      const from = Math.max(s, d.start), to = Math.min(en, d.end);
+      const lane = all ? LANES[e.type] : 0;
+      const t = TYPES[e.type];
+      blocks.push(`<button class="wk-ev ${hasDur ? '' : 'pt'} ${all ? 'lane' : ''}" data-ev="${e.id}"
+        style="--c:${t.color};top:${((from - d.start) / span) * 100}%;height:${((to - from) / span) * 100}%;${all ? `left:calc(${lane} * 100% / 3 + 1px)` : ''}"
+        title="${esc(t.title)} ${fmtTime(e.start)}" aria-label="${esc(t.title)} ${fmtTime(e.start)}"></button>`);
+    }
+    const nowLine = d.start === today ? `<div class="wk-now" id="wkNow" style="top:${((now - d.start) / span) * 100}%"></div>` : '';
+    return `<div class="wk-col ${d.start === today ? 'today' : ''}">${blocks.join('')}${nowLine}</div>`;
+  }).join('');
+
+  const legend = all ? `<div class="wk-legend">
+      <span><i style="background:var(--nurse)"></i>Feeds &amp; pump</span>
+      <span><i style="background:var(--sleep)"></i>Sleep</span>
+      <span><i style="background:var(--diaper)"></i>Diapers &amp; notes</span></div>` : '';
+
+  return `
+    <div class="wk-nav">
+      <button class="x" id="wkPrev" aria-label="Previous week">‹</button>
+      <div><b>${range}</b> <span class="note">${weekOffset === 0 ? 'This week' : weekOffset === -1 ? 'Last week' : `${-weekOffset} weeks ago`}</span></div>
+      <button class="x" id="wkNext" aria-label="Next week" ${weekOffset >= 0 ? 'disabled' : ''}>›</button>
+    </div>
+    <div class="wk card">
+      <div class="wk-head"><div></div>${head}</div>
+      <div class="wk-body">
+        <div class="wk-axis">${axis}</div>
+        <div class="wk-cols">
+          <div class="wk-night" style="top:0;height:25%"></div>
+          <div class="wk-night" style="top:75%;height:25%"></div>
+          ${lines}${cols}
+        </div>
+      </div>
+    </div>
+    ${legend}`;
+}
+
 function mountHistory(view) {
   $$('.chip', view).forEach(c => c.addEventListener('click', () => { historyFilter = c.dataset.f; render(); }));
+  $$('[data-mode]', view).forEach(b => b.addEventListener('click', () => {
+    historyMode = b.dataset.mode;
+    try { localStorage.setItem('feeding.historyMode', historyMode); } catch (e) { /* storage unavailable */ }
+    render();
+  }));
+  if (historyMode !== 'week') return;
+  $('#wkPrev', view).addEventListener('click', () => { weekOffset--; render(); });
+  $('#wkNext', view).addEventListener('click', () => { if (weekOffset < 0) { weekOffset++; render(); } });
+  $$('.wk-ev', view).forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.ev;
+    if (id === 'timer:nurse') return openNurseTimer();
+    if (id === 'timer:sleep') return openSleep();
+    const ev = state.events.find(e => e.id === id);
+    if (ev) openEditor(ev.type, ev);
+  }));
+  // Keep the "now" line moving
+  onTick(() => {
+    const line = $('#wkNow', view);
+    if (!line) return false;
+    const d0 = startOfDay(Date.now()), d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    line.style.top = ((Date.now() - d0) / (d1.getTime() - d0)) * 100 + '%';
+  });
 }
 
 function viewStats() {
