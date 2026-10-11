@@ -18,6 +18,7 @@ It's a **Progressive Web App (PWA)**: plain HTML, CSS and JS with no build step.
 - **Trends**: 7-day charts and the average time between feeds.
 - ml or oz units. Auto, light and dark themes, plus a dim, red-shifted **Night** theme for 3 a.m. feeds.
 - JSON backup and import (import merges entries), and CSV export for the pediatrician.
+- **Import from Nara**: in Nara, go to Activity → tap the avatar next to the baby's name → **Export Data**, and save the CSV to Files. Then, in this app, go to **Settings → Import from Nara (CSV)**. A preview shows what will be added before anything is saved. Importing the same file again doesn't duplicate entries. Solids, growth, medicine and similar entries become notes.
 
 ## Deploy (one time, ~1 minute)
 

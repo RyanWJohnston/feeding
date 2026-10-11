@@ -552,6 +552,8 @@ function viewSettings() {
         <button class="btn secondary" id="imp">Import</button>
       </div>
       <button class="btn secondary" id="csv">Export CSV (for pediatrician)</button>
+      <button class="btn secondary" id="nara">Import from Nara (CSV)</button>
+      <input type="file" id="naraFile" accept=".csv,text/csv,text/plain" hidden>
       <input type="file" id="impFile" accept="application/json,.json" hidden>
       <button class="btn danger" id="wipe">Delete all data</button>
     </div>
@@ -571,6 +573,8 @@ function mountSettings(view) {
   $('#csv', view).addEventListener('click', exportCsv);
   $('#imp', view).addEventListener('click', () => $('#impFile', view).click());
   $('#impFile', view).addEventListener('change', e => e.target.files[0] && importJson(e.target.files[0]));
+  $('#nara', view).addEventListener('click', () => $('#naraFile', view).click());
+  $('#naraFile', view).addEventListener('change', e => e.target.files[0] && openNaraImport(e.target.files[0]));
   $('#wipe', view).addEventListener('click', () => {
     if (confirm('Delete ALL entries and settings on this phone? This also stops syncing; the other phone keeps its copy. Export a backup first if unsure.')) {
       Sync.leave(); state = defaultState(); save(); render(); toast('All data deleted from this phone');
@@ -911,19 +915,28 @@ function importJson(file) {
   file.text().then(txt => {
     const data = JSON.parse(txt);
     if (!Array.isArray(data.events)) throw new Error('No events in file');
-    let added = 0, updated = 0;
-    const byId = new Map(state.events.map(e => [e.id, e]));
-    for (const e of data.events) {
-      if (!e || !e.id || !TYPES[e.type] || typeof e.start !== 'number') continue;
-      const cur = byId.get(e.id);
-      if (!cur) { byId.set(e.id, e); added++; Sync.push(e); }
-      else if ((e.updated || 0) > (cur.updated || 0)) { byId.set(e.id, e); updated++; Sync.push(e); }
-    }
-    state.events = [...byId.values()].sort((a, b) => b.start - a.start);
+    const { added, updated } = mergeEvents(data.events);
     if (!state.settings.babyName && data.settings) state.settings = { ...state.settings, ...data.settings };
     save(); render();
     toast(`Imported: ${added} new, ${updated} updated`);
   }).catch(err => toast('Import failed: ' + err.message));
+}
+
+// Adds or updates entries by id (newer `updated` wins) and shares them if syncing.
+function mergeEvents(list) {
+  let added = 0, updated = 0;
+  const byId = new Map(state.events.map(e => [e.id, e]));
+  const changed = [];
+  for (const e of list) {
+    if (!e || !e.id || !TYPES[e.type] || typeof e.start !== 'number' || isNaN(e.start)) continue;
+    const cur = byId.get(e.id);
+    if (!cur) { byId.set(e.id, e); added++; changed.push(e); }
+    else if ((e.updated || 0) > (cur.updated || 0)) { byId.set(e.id, e); updated++; changed.push(e); }
+  }
+  state.events = [...byId.values()].sort((a, b) => b.start - a.start);
+  save();
+  Sync.pushMany(changed);
+  return { added, updated };
 }
 
 /* ---------- Misc ---------- */

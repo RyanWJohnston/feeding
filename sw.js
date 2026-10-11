@@ -1,6 +1,6 @@
 // Offline cache for the app shell. Bump VERSION when files change.
-const VERSION = 'feeding-v5';
-const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'sync.js', 'sync-config.js',
+const VERSION = 'feeding-v6';
+const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'sync.js', 'sync-config.js', 'nara-import.js',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png'];
 
 self.addEventListener('install', e => {

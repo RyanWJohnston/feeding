@@ -192,6 +192,13 @@ const Sync = (() => {
     start,
     flush: () => (unsubs.length ? flush() : start()),
     push(ev) { queue({ ...ev, updated: ev.updated || Date.now() }); },
+    // Bulk version for imports: one save and one flush instead of one per entry
+    pushMany(evs) {
+      if (!S().family || !evs.length) return;
+      for (const ev of evs) S().pending[ev.id] = { ...ev, updated: ev.updated || Date.now() };
+      save();
+      flush();
+    },
     pushDelete(id) { queue({ id, deleted: true, updated: Date.now() }); },
     pushBaby() { if (S().family) { S().pendingBaby = true; save(); flush(); } },
 
