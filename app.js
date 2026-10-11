@@ -454,6 +454,22 @@ function mountHistory(view) {
   if (historyMode !== 'week') return;
   const sc = $('#wkScroll', view);
   const days = timelineDays();
+  // Size the timeline to exactly the space between its top and the tab bar,
+  // measured on the device (fonts and safe areas differ per phone).
+  const fit = () => {
+    if (!sc.isConnected) return window.removeEventListener('resize', fit);
+    const top = sc.getBoundingClientRect().top + window.scrollY;
+    const bar = $('.tabbar').getBoundingClientRect().top + window.scrollY;
+    const legend = $('.wk-legend', view);
+    const below = (legend ? legend.offsetHeight + 16 : 0) + 8;
+    let h = Math.max(240, Math.floor(bar - top - below));
+    sc.style.height = h + 'px';
+    // Whatever still makes the page taller than the screen (padding etc.) comes off too
+    const extra = document.documentElement.scrollHeight - window.innerHeight;
+    if (extra > 0) sc.style.height = Math.max(240, h - extra) + 'px';
+  };
+  fit();
+  window.addEventListener('resize', fit);
   const colW = () => ($('.wk-col', sc) || {}).offsetWidth || 1;
   const toToday = smooth => sc.scrollTo({ left: sc.scrollWidth, behavior: smooth ? 'smooth' : 'auto' });
   // Restore the previous position (kept relative to today, since days get added on the right)
